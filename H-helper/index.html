@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Homework Helper AI</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter font from Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        /* Custom scrollbar for chat messages and history */
+        ::-webkit-scrollbar {
+            width: 7px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- React and ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX transformation in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables for Firebase instances
+        window.firebaseApp = null;
+        window.db = null;
+        window.auth = null;
+        window.onAuthStateChanged = onAuthStateChanged;
+        window.signInAnonymously = signInAnonymously;
+        window.signInWithCustomToken = signInWithCustomToken;
+        window.signOutFirebase = signOut;
+        window.createUserWithEmailAndPassword = createUserWithEmailAndPassword; // Added for email/password auth
+        window.signInWithEmailAndPassword = signInWithEmailAndPassword; // Added for email/password auth
+        window.getFirestore = getFirestore;
+        window.doc = doc;
+        window.getDoc = getDoc;
+        window.setDoc = setDoc;
+        window.onSnapshot = onSnapshot;
+        window.collection = collection;
+        window.query = query;
+        window.orderBy = orderBy;
+        window.addDoc = addDoc;
+        window.serverTimestamp = serverTimestamp;
+
+        // Initialize Firebase
+        const initializeFirebase = async () => {
+            try {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+                if (!window.firebaseApp) {
+                    window.firebaseApp = initializeApp(firebaseConfig);
+                    window.db = getFirestore(window.firebaseApp);
+                    window.auth = getAuth(window.firebaseApp);
+
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(window.auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(window.auth);
+                    }
+                    console.log("Firebase initialized and authenticated.");
+                }
+            } catch (error) {
+                console.error("Error initializing Firebase:", error);
+            }
+        };
+
+        initializeFirebase();
+    </script>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        // Utility function to generate a simple user avatar
+        const getUserAvatar = (name) => {
+            if (!name) return 'JW';
+            const initials = name.split(' ').map(n => n[0]).join('').toUpperCase();
+            return initials.substring(0, 2);
+        };
+
+        // Modal Component for Login/Signup
+        const AuthModal = ({ show, onClose, onAuthSuccess }) => {
+            const [isLogin, setIsLogin] = useState(true);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setLoading(true);
+
+                if (!window.auth) {
+                    setError("Firebase Auth not initialized.");
+                    setLoading(false);
+                    return;
+                }
+
+                try {
+                    if (isLogin) {
+                        await window.signInWithEmailAndPassword(window.auth, email, password);
+                        console.log("Logged in successfully!");
+                    } else {
+                        await window.createUserWithEmailAndPassword(window.auth, email, password);
+                        console.log("Signed up successfully!");
+                    }
+                    onAuthSuccess(); // Callback to update parent state (e.g., close modal)
+                } catch (err) {
+                    console.error("Authentication error:", err.message);
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            if (!show) return null;
+
+            return (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+                        <h2 className="text-2xl font-bold text-center mb-6 text-gray-800">
+                            {isLogin ? 'Login' : 'Sign Up'}
+                        </h2>
+                        {error && <p className="text-red-600 text-center mb-4">{error}</p>}
+                        <form onSubmit={handleSubmit}>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="email">
+                                    Email
+                                </label>
+                                <input
+                                    type="email"
+                                    id="email"
+                                    className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                    placeholder="your@example.com"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="mb-6">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="password">
+                                    Password
+                                </label>
+                                <input
+                                    type="password"
+                                    id="password"
+                                    className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 mb-3 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                    placeholder="********"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <button
+                                    type="submit"
+                                    className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full focus:outline-none focus:shadow-outline transition duration-200 disabled:opacity-50"
+                                    disabled={loading}
+                                >
+                                    {loading ? 'Processing...' : (isLogin ? 'Login' : 'Sign Up')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsLogin(!isLogin)}
+                                    className="inline-block align-baseline font-bold text-sm text-blue-500 hover:text-blue-800"
+                                >
+                                    {isLogin ? 'Need an account? Sign Up' : 'Already have an account? Login'}
+                                </button>
+                            </div>
+                        </form>
+                        <button
+                            onClick={onClose}
+                            className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+
+        // Dashboard Component
+        const Dashboard = ({ userData, recentQuestions, onNewQuestion, onHistoryClick, onBuyCredits, onSignOut, onShowAuthModal }) => {
+            const creditsRemaining = userData?.credits || 0;
+            const questionsSolved = userData?.questionsSolved || 0;
+            const questionsThisMonth = userData?.questionsThisMonth || 0;
+            const topSubject = userData?.topSubject || 'Mathematics';
+            const accountType = userData?.accountType || 'Free';
+            const userName = userData?.name || 'Guest User';
+            const userEmail = userData?.email || 'guest@example.com';
+
+            const subjects = [
+                { name: 'Mathematics', icon: '🔢' },
+                { name: 'Life Sciences', icon: '🧬' },
+                { name: 'Physical Sciences', icon: '🧪' },
+                { name: 'Chemistry', icon: '⚛️' },
+                { name: 'Physics', icon: '💡' },
+                { name: 'History', icon: '📜' },
+                { name: 'Geography', icon: '🌍' },
+                { name: 'English', icon: '✍️' },
+            ];
+
+
+            return (
+                <div className="p-6 bg-gray-50 flex-1 overflow-y-auto">
+                    <h2 className="text-3xl font-bold text-gray-800 mb-2">Welcome back, {userName}! 👋</h2>
+                    <p className="text-gray-600 mb-8">Ready to help your child with homework today?</p>
+
+                    {/* Stats Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <div className="bg-white p-6 rounded-xl shadow-md flex items-center justify-between">
+                            <div>
+                                <p className="text-gray-500 text-sm">Credits Remaining</p>
+                                <p className="text-3xl font-bold text-blue-600">{creditsRemaining}</p>
+                            </div>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                            </svg>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-md flex items-center justify-between">
+                            <div>
+                                <p className="text-gray-500 text-sm">Questions Solved</p>
+                                <p className="text-3xl font-bold text-green-600">{questionsSolved}</p>
+                            </div>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-md flex items-center justify-between">
+                            <div>
+                                <p className="text-gray-500 text-sm">This Month</p>
+                                <p className="text-3xl font-bold text-purple-600">{questionsThisMonth}</p>
+                            </div>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" />
+                            </svg>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-md flex items-center justify-between">
+                            <div>
+                                <p className="text-gray-500 text-sm">Top Subject</p>
+                                <p className="text-3xl font-bold text-orange-600">{topSubject}</p>
+                            </div>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5s3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18s-3.332.477-4.5 1.253" />
+                            </svg>
+                        </div>
+                    </div>
+
+                    {/* Quick Actions & Account Status */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-md">
+                            <h3 className="text-xl font-semibold text-gray-800 mb-4">Quick Actions</h3>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <button onClick={onNewQuestion} className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                                    </svg>
+                                    New Question
+                                </button>
+                                <button onClick={onBuyCredits} className="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                                    </svg>
+                                    Buy Credits
+                                </button>
+                                <button onClick={onHistoryClick} className="bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2" />
+                                    </svg>
+                                    View History
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-xl shadow-md">
+                            <h3 className="text-xl font-semibold text-gray-800 mb-4">Account Status</h3>
+                            <div className="flex items-center mb-4">
+                                <div className="w-12 h-12 bg-blue-200 rounded-full flex items-center justify-center text-blue-800 font-bold text-lg mr-3">
+                                    {getUserAvatar(userName)}
+                                </div>
+                                <div>
+                                    <p className="font-semibold text-gray-800">{userName}</p>
+                                    <p className="text-sm text-gray-600">{userEmail}</p>
+                                </div>
+                            </div>
+                            <div className="mb-2">
+                                <span className="font-semibold text-gray-700">Account Type:</span> <span className="text-gray-600">{accountType}</span>
+                            </div>
+                            <div className="mb-4">
+                                <span className="font-semibold text-gray-700">Credits:</span> <span className="text-gray-600">{creditsRemaining}</span>
+                            </div>
+                            <button onClick={onBuyCredits} className="w-full bg-blue-100 text-blue-700 py-2 rounded-lg font-semibold hover:bg-blue-200 transition duration-200">
+                                Buy More Credits
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Subjects Section */}
+                    <div className="bg-white p-6 rounded-xl shadow-md mb-8">
+                        <h3 className="text-xl font-semibold text-gray-800 mb-4">Subjects Covered</h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {subjects.map((subject, index) => (
+                                <div key={index} className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-blue-50 transition duration-200 cursor-pointer">
+                                    <span className="text-3xl mb-2">{subject.icon}</span>
+                                    <p className="text-sm font-medium text-gray-700 text-center">{subject.name}</p>
+                                </div>
+                            ))}
+                        </div>
+                        <button onClick={() => alert('Explore all subjects (not implemented)')} className="mt-6 w-full bg-gray-100 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-200 transition duration-200">
+                            Explore All Subjects
+                        </button>
+                    </div>
+
+                    {/* Recent Questions & Upgrade Section */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-md">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-xl font-semibold text-gray-800">Recent Questions</h3>
+                                <button onClick={onHistoryClick} className="text-blue-600 hover:underline text-sm">View All</button>
+                            </div>
+                            {recentQuestions.length === 0 ? (
+                                <p className="text-gray-500">No recent questions. Start a new one!</p>
+                            ) : (
+                                <div className="space-y-3">
+                                    {recentQuestions.map((q, index) => (
+                                        <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                            <div>
+                                                <p className="font-medium text-gray-800">{q.subject || 'General'}</p>
+                                                <p className="text-sm text-gray-600">{q.grade || 'N/A'}</p>
+                                                <p className="text-xs text-gray-500">{new Date(q.timestamp?.toDate ? q.timestamp.toDate() : q.timestamp).toLocaleString()}</p>
+                                            </div>
+                                            <div className="flex items-center space-x-2">
+                                                <span className={`px-3 py-1 text-xs font-semibold rounded-full ${q.status === 'Solved' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                    {q.status}
+                                                </span>
+                                                <button onClick={() => alert('View question details (not implemented)')} className="text-blue-600 hover:underline text-sm">View</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="bg-gradient-to-br from-purple-500 to-indigo-600 text-white p-6 rounded-xl shadow-md">
+                            <h3 className="text-xl font-semibold mb-4">Upgrade to Premium</h3>
+                            <p className="text-sm opacity-90 mb-4">Get unlimited questions for just KES 300/month</p>
+                            <ul className="text-sm space-y-2 mb-6">
+                                <li className="flex items-center"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> Unlimited questions</li>
+                                <li className="flex items-center"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> Priority support</li>
+                                <li className="flex items-center"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> Advanced analytics</li>
+                                <li className="flex items-center"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> No per-question charges</li>
+                            </ul>
+                            <button className="w-full bg-white text-purple-700 py-2 rounded-lg font-bold hover:bg-gray-100 transition duration-200 shadow-lg">
+                                Upgrade Now
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Chat Interface Component (reused from previous version)
+        const ChatInterface = ({ onBackToDashboard, onNewQuestionSubmit }) => {
+            const [messages, setMessages] = useState([]);
+            const [inputText, setInputText] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+            const [selectedImage, setSelectedImage] = useState(null);
+            const messagesEndRef = useRef(null);
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                scrollToBottom();
+            }, [messages]);
+
+            const scrollToBottom = () => {
+                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+
+            const handleImageChange = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setSelectedImage(reader.result.split(',')[1]);
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    setSelectedImage(null);
+                }
+            };
+
+            const clearImage = () => {
+                setSelectedImage(null);
+                if (fileInputRef.current) {
+                    fileInputRef.current.value = '';
+                }
+            };
+
+            const handleSendMessage = async () => {
+                if (inputText.trim() === '' && !selectedImage) return;
+
+                const userMessage = {
+                    sender: 'user',
+                    text: inputText,
+                    image: selectedImage ? `data:image/png;base64,${selectedImage}` : null
+                };
+                setMessages((prevMessages) => [...prevMessages, userMessage]);
+                setInputText('');
+                clearImage();
+                setIsLoading(true);
+
+                try {
+                    let parts = [];
+                    if (inputText.trim() !== '') {
+                        parts.push({ text: inputText });
+                    }
+                    if (selectedImage) {
+                        parts.push({
+                            inlineData: {
+                                mimeType: "image/png",
+                                data: selectedImage
+                            }
+                        });
+                    }
+
+                    const payload = {
+                        contents: [{ role: "user", parts: parts }],
+                    };
+
+                    // IMPORTANT: Replace with your actual Gemini API key if running locally
+                    const apiKey = "AIzaSyCoHNFBHZwRJDr_qt3I0d-Y3gVGN1GaIaU"; // Your Gemini API key here
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const result = await response.json();
+
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const aiResponseText = result.candidates[0].content.parts[0].text;
+                        const aiMessage = { sender: 'ai', text: aiResponseText };
+                        setMessages((prevMessages) => [...prevMessages, aiMessage]);
+
+                        // Call the callback to save the question to history
+                        onNewQuestionSubmit({
+                            questionText: userMessage.text,
+                            questionImage: userMessage.image,
+                            aiResponse: aiResponseText,
+                            timestamp: Date.now(),
+                            subject: 'General', // Default subject, could be enhanced later
+                            grade: 'N/A', // Default grade
+                            status: 'Solved'
+                        });
+
+                    } else {
+                        console.error("Unexpected API response structure:", result);
+                        const errorMessage = { sender: 'ai', text: "Sorry, I couldn't get a clear answer. Please try again." };
+                        setMessages((prevMessages) => [...prevMessages, errorMessage]);
+                    }
+                } catch (error) {
+                    console.error("Error calling Gemini API:", error);
+                    const errorMessage = { sender: 'ai', text: "An error occurred while fetching the answer. Please check your network connection or try again later." };
+                    setMessages((prevMessages) => [...prevMessages, errorMessage]);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter' && !isLoading && (inputText.trim() !== '' || selectedImage)) {
+                    handleSendMessage();
+                }
+            };
+
+            return (
+                <div className="flex flex-col flex-1">
+                    {/* Chat Header */}
+                    <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-4 shadow-md flex items-center justify-between">
+                        <button onClick={onBackToDashboard} className="text-white hover:text-gray-200 transition duration-200">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                            </svg>
+                        </button>
+                        <h2 className="text-xl font-bold">New Question</h2>
+                        <div></div> {/* Placeholder for alignment */}
+                    </div>
+
+                    {/* Chat Messages Area */}
+                    <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-gray-50">
+                        {messages.length === 0 && (
+                            <div className="text-center text-gray-500 mt-10">
+                                <p className="text-lg">What homework can I help with?</p>
+                                <p className="text-sm">Type your question or upload a photo.</p>
+                            </div>
+                        )}
+                        {messages.map((msg, index) => (
+                            <div
+                                key={index}
+                                className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                            >
+                                <div
+                                    className={`max-w-[75%] p-3 rounded-lg shadow-md ${
+                                        msg.sender === 'user'
+                                            ? 'bg-blue-500 text-white rounded-br-none'
+                                            : 'bg-gray-200 text-gray-800 rounded-bl-none'
+                                    }`}
+                                >
+                                    {msg.text && <p>{msg.text}</p>}
+                                    {msg.image && (
+                                        <img src={msg.image} alt="User upload" className="mt-2 rounded-md max-w-full h-auto" />
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                        {isLoading && (
+                            <div className="flex justify-start">
+                                <div className="max-w-[75%] p-3 rounded-lg shadow-md bg-gray-200 text-gray-800 rounded-bl-none">
+                                    <div className="flex items-center">
+                                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Thinking...
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        <div ref={messagesEndRef} />
+                    </div>
+
+                    {/* Input Area */}
+                    <div className="p-4 bg-gray-50 border-t border-gray-200 flex flex-col">
+                        {selectedImage && (
+                            <div className="flex items-center justify-between p-2 bg-blue-100 rounded-lg mb-2">
+                                <img src={`data:image/png;base64,${selectedImage}`} alt="Selected" className="h-16 w-16 object-cover rounded-md mr-2" />
+                                <span className="text-sm text-gray-700 truncate flex-1">Image selected</span>
+                                <button
+                                    onClick={clearImage}
+                                    className="ml-2 p-1 rounded-full bg-red-500 text-white hover:bg-red-600 focus:outline-none"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        )}
+                        <div className="flex items-center">
+                            <input
+                                type="file"
+                                accept="image/*"
+                                ref={fileInputRef}
+                                onChange={handleImageChange}
+                                className="hidden"
+                                id="chat-image-upload"
+                            />
+                            <label
+                                htmlFor="chat-image-upload"
+                                className="p-3 bg-gray-200 text-gray-700 rounded-full cursor-pointer hover:bg-gray-300 transition duration-200 mr-2"
+                                title="Upload Image"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                            </label>
+                            <input
+                                type="text"
+                                className="flex-1 p-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-400 mr-3"
+                                placeholder="Type your homework question here..."
+                                value={inputText}
+                                onChange={(e) => setInputText(e.target.value)}
+                                onKeyPress={handleKeyPress}
+                                disabled={isLoading}
+                            />
+                            <button
+                                onClick={handleSendMessage}
+                                disabled={isLoading || (inputText.trim() === '' && !selectedImage)}
+                                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Send
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+
+        // Main App Component (handles overall state and view switching)
+        const App = () => {
+            const [currentView, setCurrentView] = useState('dashboard');
+            const [userId, setUserId] = useState(null);
+            const [userData, setUserData] = useState(null);
+            const [recentQuestions, setRecentQuestions] = useState([]);
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [showAuthModal, setShowAuthModal] = useState(false); // State for auth modal
+
+            // Firebase Initialization and Auth State Listener
+            useEffect(() => {
+                const initAndListen = async () => {
+                    if (!window.firebaseApp) {
+                        const checkFirebaseReady = setInterval(() => {
+                            if (window.firebaseApp) {
+                                clearInterval(checkFirebaseReady);
+                                setupAuthListener();
+                            }
+                        }, 100);
+                    } else {
+                        setupAuthListener();
+                    }
+                };
+
+                const setupAuthListener = () => {
+                    if (window.auth) {
+                        window.onAuthStateChanged(window.auth, (user) => {
+                            if (user) {
+                                setUserId(user.uid);
+                                console.log("Auth state changed, user ID:", user.uid);
+                            } else {
+                                setUserId(null);
+                                setUserData(null);
+                                setRecentQuestions([]);
+                                console.log("Auth state changed, no user.");
+                            }
+                            setIsAuthReady(true);
+                        });
+                    } else {
+                        console.error("Firebase Auth not available.");
+                        setIsAuthReady(true);
+                    }
+                };
+
+                initAndListen();
+            }, []);
+
+            // Fetch/Listen to User Data and Question History
+            useEffect(() => {
+                let unsubscribeUserData;
+                let unsubscribeQuestions;
+
+                if (isAuthReady && userId && window.db) {
+                    const userDocRef = window.doc(window.db, "artifacts", typeof __app_id !== 'undefined' ? __app_id : 'default-app-id', "users", userId, "userData", "profile");
+                    const questionsColRef = window.collection(window.db, "artifacts", typeof __app_id !== 'undefined' ? __app_id : 'default-app-id', "users", userId, "questionsHistory");
+
+                    // Listen for user data
+                    unsubscribeUserData = window.onSnapshot(userDocRef, (docSnap) => {
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            setUserData({ id: docSnap.id, ...data });
+                            console.log("User data loaded:", data);
+                        } else {
+                            const initialData = {
+                                name: window.auth.currentUser?.displayName || `User ${userId.substring(0, 4)}`,
+                                email: window.auth.currentUser?.email || `${userId.substring(0, 8)}@example.com`,
+                                credits: 5,
+                                questionsSolved: 0,
+                                questionsThisMonth: 0,
+                                accountType: 'Free',
+                                topSubject: 'Mathematics'
+                            };
+                            window.setDoc(userDocRef, initialData)
+                                .then(() => setUserData(initialData))
+                                .catch(e => console.error("Error setting initial user data:", e));
+                        }
+                    }, (error) => {
+                        console.error("Error listening to user data:", error);
+                    });
+
+                    // Listen for recent questions (last 5)
+                    unsubscribeQuestions = window.onSnapshot(window.query(questionsColRef), (snapshot) => {
+                        const questions = [];
+                        snapshot.forEach(doc => {
+                            questions.push({ id: doc.id, ...doc.data() });
+                        });
+                        questions.sort((a, b) => (b.timestamp?.toDate() || 0) - (a.timestamp?.toDate() || 0));
+                        setRecentQuestions(questions.slice(0, 5));
+                        console.log("Recent questions loaded:", questions.slice(0, 5));
+                    }, (error) => {
+                        console.error("Error listening to questions history:", error);
+                    });
+
+                } else if (isAuthReady && !userId) {
+                    setUserData(null);
+                    setRecentQuestions([]);
+                }
+
+                return () => {
+                    if (unsubscribeUserData) unsubscribeUserData();
+                    if (unsubscribeQuestions) unsubscribeQuestions();
+                };
+            }, [isAuthReady, userId]);
+
+            const addQuestionToHistory = async (questionData) => {
+                if (!userId || !window.db) {
+                    console.error("Cannot add question to history: User not authenticated or DB not ready.");
+                    return;
+                }
+
+                const questionsColRef = window.collection(window.db, "artifacts", typeof __app_id !== 'undefined' ? __app_id : 'default-app-id', "users", userId, "questionsHistory");
+                const userDocRef = window.doc(window.db, "artifacts", typeof __app_id !== 'undefined' ? __app_id : 'default-app-id', "users", userId, "userData", "profile");
+
+                try {
+                    await window.addDoc(questionsColRef, {
+                        ...questionData,
+                        timestamp: window.serverTimestamp()
+                    });
+
+                    if (userData) {
+                        const newQuestionsSolved = (userData.questionsSolved || 0) + 1;
+                        const newCredits = (userData.credits || 0) - 1;
+
+                        await window.setDoc(userDocRef, {
+                            questionsSolved: newQuestionsSolved,
+                            credits: newCredits,
+                            questionsThisMonth: (userData.questionsThisMonth || 0) + 1
+                        }, { merge: true });
+                    }
+                    console.log("Question added to history and user data updated.");
+                } catch (e) {
+                    console.error("Error adding document or updating user data: ", e);
+                }
+            };
+
+            const handleSignOut = async () => {
+                try {
+                    if (window.auth) {
+                        await window.signOutFirebase(window.auth);
+                        console.log("User signed out.");
+                        setUserId(null);
+                        setUserData(null);
+                        setRecentQuestions([]);
+                        setCurrentView('dashboard');
+                    }
+                } catch (error) {
+                    console.error("Error signing out:", error);
+                }
+            };
+
+            const handleAuthSuccess = () => {
+                setShowAuthModal(false);
+                // Auth state listener will pick up the new user and update userId/userData
+            };
+
+            if (!isAuthReady) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 to-purple-100">
+                        <div className="flex items-center text-gray-700 text-lg">
+                            <svg className="animate-spin -ml-1 mr-3 h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Loading app...
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-100 to-purple-100 flex flex-col overflow-y-auto">
+                    {/* Top Navigation Bar */}
+                    <nav className="bg-white shadow-md p-4 flex items-center justify-between">
+                        <div className="flex items-center">
+                            <img src="https://placehold.co/40x40/0000FF/FFFFFF?text=📚" alt="Logo" className="h-10 w-10 mr-3 rounded-full" />
+                            <span className="text-xl font-bold text-gray-800">HomeworkHelper KE</span>
+                        </div>
+                        <div className="flex items-center space-x-4">
+                            <button
+                                onClick={() => setCurrentView('chat')}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-full shadow-md transition duration-300 ease-in-out flex items-center"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                                </svg>
+                                New Question
+                            </button>
+                            <button onClick={() => alert('History view coming soon!')} className="text-gray-700 hover:text-blue-600 font-medium hidden md:block">
+                                View History
+                            </button>
+                            {userId ? (
+                                <div className="relative group">
+                                    <div className="w-10 h-10 bg-blue-200 rounded-full flex items-center justify-center text-blue-800 font-bold text-sm cursor-pointer">
+                                        {getUserAvatar(userData?.name)}
+                                    </div>
+                                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10 opacity-0 group-hover:opacity-100 group-hover:visible transition-opacity duration-200 invisible">
+                                        <div className="block px-4 py-2 text-sm text-gray-700 border-b border-gray-100">
+                                            <p className="font-semibold">{userData?.name || 'Guest'}</p>
+                                            <p className="text-xs text-gray-500">{userData?.email || 'N/A'}</p>
+                                        </div>
+                                        <button
+                                            onClick={handleSignOut}
+                                            className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                                        >
+                                            Sign Out
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => setShowAuthModal(true)}
+                                    className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-full shadow-md transition duration-300 ease-in-out"
+                                >
+                                    Login / Sign Up
+                                </button>
+                            )}
+                        </div>
+                    </nav>
+
+                    {/* Main Content Area */}
+                    <div className="flex-1 flex flex-col">
+                        {currentView === 'dashboard' && (
+                            <Dashboard
+                                userData={userData}
+                                recentQuestions={recentQuestions}
+                                onNewQuestion={() => setCurrentView('chat')}
+                                onHistoryClick={() => alert('History view coming soon!')}
+                                onBuyCredits={() => alert('Buy Credits functionality coming soon!')}
+                                onSignOut={handleSignOut}
+                                onShowAuthModal={() => setShowAuthModal(true)}
+                            />
+                        )}
+                        {currentView === 'chat' && (
+                            <ChatInterface
+                                onBackToDashboard={() => setCurrentView('dashboard')}
+                                onNewQuestionSubmit={addQuestionToHistory}
+                            />
+                        )}
+                    </div>
+
+                    <AuthModal
+                        show={showAuthModal}
+                        onClose={() => setShowAuthModal(false)}
+                        onAuthSuccess={handleAuthSuccess}
+                    />
+                </div>
+            );
+        };
+
+        // Render the App component into the root div
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
